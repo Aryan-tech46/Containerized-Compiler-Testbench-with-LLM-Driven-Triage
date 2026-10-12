@@ -7,7 +7,11 @@ multi-model fallback chains and retrieved RAG context.
 import json
 import os
 import re
+import warnings
 from typing import Dict, List, Any, Optional
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 

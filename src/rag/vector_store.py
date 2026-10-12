@@ -8,8 +8,11 @@ import json
 import math
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 from dotenv import load_dotenv
 

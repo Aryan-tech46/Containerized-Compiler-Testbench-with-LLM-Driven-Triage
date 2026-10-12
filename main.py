@@ -7,8 +7,12 @@ Docker containers, RAG vector retrieval, and AI triage reporting.
 import argparse
 import os
 import sys
+import warnings
 from pathlib import Path
 from typing import List
+
+# Suppress library deprecation warnings from polluting CLI output
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 from dotenv import load_dotenv
 
@@ -41,7 +45,7 @@ except ImportError:
 def print_banner():
     banner = """
 ================================================================================
-   ANTIGRAVITY: CONTAINERIZED COMPILER TESTBENCH & LLM TRIAGE ENGINE
+   CONTAINERIZED COMPILER TESTBENCH & LLM TRIAGE ENGINE
 ================================================================================
 """
     if console:
