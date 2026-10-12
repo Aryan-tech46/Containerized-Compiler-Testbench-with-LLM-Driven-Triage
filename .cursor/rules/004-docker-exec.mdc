@@ -1,0 +1,13 @@
+---
+description: Docker sandboxing guidelines for compiler execution
+globs: docker/**, src/engine/runner.py
+alwaysApply: false
+---
+# Docker Execution Sandbox Rules
+- **Ephemeral Containers:** Always run compilation in short-lived containers.
+- **Strict Quotas:**
+  - `mem_limit="512m"`
+  - `cpu_quota=50000` (equivalent to 0.5 CPU)
+  - `network_mode="none"` (air-gapped for security)
+- **Zero Orphaned Containers:** Ensure cleanup happens in a `finally` block or context manager. Remove containers with `force=True`.
+- **Standard Output Format:** Standardize output dictionary with `test_file`, `status` (`PASS`, `COMPILE_ERROR`, `CRASH`), `exit_code`, and `logs`.

@@ -1,0 +1,10 @@
+---
+description: Pinecone Vector Database and Embedding standards for Antigravity
+globs: src/rag/**
+alwaysApply: false
+---
+# Python RAG Rules & Best Practices
+- **Vector DB:** Pinecone serverless index.
+- **Embeddings:** Use compatible text embedding models with dimension matching the index (e.g. text-embedding-004 or sentence-transformers).
+- **Graceful Fallbacks:** If `PINECONE_API_KEY` is absent or the service is unreachable, support local fallback / dry-run mode so test pipelines do not crash unexpectedly.
+- **Metadata:** Store `bug_id`, `compiler`, `category`, `root_cause`, and `workaround` alongside each crash trace vector.

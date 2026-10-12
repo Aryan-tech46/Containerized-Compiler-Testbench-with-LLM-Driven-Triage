@@ -1,0 +1,27 @@
+# Minimal Ubuntu environment for GCC compiler stress testing
+FROM ubuntu:24.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install GCC, G++, GDB and essential build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    gdb \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for isolated and secure execution
+RUN groupadd -g 1001 sandboxgroup && \
+    useradd -u 1001 -g sandboxgroup -m -s /bin/bash sandboxuser
+
+# Prepare sandbox workspace
+WORKDIR /sandbox
+RUN chown -R sandboxuser:sandboxgroup /sandbox
+
+# Drop root privileges
+USER sandboxuser
+
+CMD ["/bin/bash"]

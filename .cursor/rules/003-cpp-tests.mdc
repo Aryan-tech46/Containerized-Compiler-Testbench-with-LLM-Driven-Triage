@@ -1,0 +1,12 @@
+---
+description: C/C++ Test generation guidelines for compiler stress testing
+globs: compiler_tests/**, src/engine/generator.py
+alwaysApply: false
+---
+# C/C++ Test Generation Rules
+- **Stress Categories:**
+  1. Deep template metaprogramming recursion (SFINAE, variadic template expansion depth).
+  2. Pointer aliasing, reinterpretation, and complex offset arithmetic.
+  3. Inline assembly and volatile memory ordering.
+  4. Concurrency edge cases with uninitialized memory and atomics.
+- **Syntactic Validity:** The generated code should be syntactically valid C++ (C++17/C++20 standard) designed to stress compiler frontend AST parsers and optimization passes (-O3).

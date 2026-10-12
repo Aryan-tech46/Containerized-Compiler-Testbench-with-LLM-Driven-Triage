@@ -1,0 +1,27 @@
+# Minimal Ubuntu environment for Clang/LLVM compiler stress testing
+FROM ubuntu:24.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Clang, LLVM, lld, gdb and essential build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    clang \
+    llvm \
+    lld \
+    gdb \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN groupadd -g 1001 sandboxgroup && \
+    useradd -u 1001 -g sandboxgroup -m -s /bin/bash sandboxuser
+
+# Prepare sandbox workspace
+WORKDIR /sandbox
+RUN chown -R sandboxuser:sandboxgroup /sandbox
+
+USER sandboxuser
+
+CMD ["/bin/bash"]

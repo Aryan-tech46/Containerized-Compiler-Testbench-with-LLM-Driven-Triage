@@ -1,0 +1,31 @@
+---
+description: Core architecture and project requirements for Antigravity
+globs: 
+alwaysApply: true
+---
+# Project Antigravity Basics
+- **Architecture:** A containerized compiler testbench integrated with an LLM-driven RAG pipeline to triage compiler crash logs.
+- **Tech Stack:** Python (Automation/RAG), C/C++ (Test Binaries), Docker (Execution), Pinecone (Vector DB), Redis (Caching).
+- **Constraint:** Never modify the host machine's state during testing. All compilations and executions must happen inside ephemeral Docker containers.
+- **API Keys:** Never hardcode API keys for LLM providers or Pinecone. Always use `os.getenv()`.
+
+
+
+## Directory Structure
+Enforce the following modular architecture:
+```text
+antigravity/
+├── .cursorrules           # This file
+├── docker/                # Dockerfiles for compiler test environments
+│   ├── Dockerfile.gcc
+│   └── Dockerfile.clang
+├── src/
+│   ├── engine/            # Execution engine for running tests in containers
+│   ├── rag/               # Retrieval-Augmented Generation pipeline (Pinecone integration)
+│   ├── llm/               # Multi-provider LLM fallback chains and prompt templates
+│   └── utils/             # Redis caching and logging utilities
+├── tests/                 # Unit tests for the Python framework
+├── compiler_tests/        # The actual C/C++ code snippets injected into the compilers
+├── data/                  # Sample crash logs for vector DB seeding
+├── requirements.txt       # Python dependencies
+└── main.py                # CLI entry point

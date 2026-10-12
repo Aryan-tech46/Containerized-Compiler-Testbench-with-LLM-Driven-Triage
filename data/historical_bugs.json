@@ -1,0 +1,122 @@
+[
+  {
+    "bug_id": "GCC-98512",
+    "compiler": "gcc",
+    "version": "11.1.0",
+    "category": "Frontend Parser / Template Substitution",
+    "flags": "-O3 -std=c++20",
+    "crash_signature": "internal compiler error: Segmentation fault in instantiate_class_template at cp/pt.c:11942\n0x8a9142 instantiate_class_template(tree_node*, tree_node*, tree_node*)\n\tcp/pt.c:11942\n0x8b3211 instantiate_template(tree_node*, tree_node*, int)\n\tcp/pt.c:20455\nPlease submit a full bug report,",
+    "root_cause": "Infinite recursion in constexpr constraint satisfaction evaluation when expanding nested variadic template packs with recursive concepts, exhausting AST parser stack memory.",
+    "workaround": "Set explicit recursion limits with -ftemplate-depth=256 or restructure the concept constraint to use fold expressions instead of recursive type traits."
+  },
+  {
+    "bug_id": "GCC-101140",
+    "compiler": "gcc",
+    "version": "12.2.0",
+    "category": "Instruction Selection / Backend",
+    "flags": "-O3 -mavx2",
+    "crash_signature": "internal compiler error: in extract_insn, at recog.cc:2791\n0x11ab410 _fatal_insn(char const*, rtx_def const*, char const*, int, char const*)\n\trecog.cc:2791\n0x11ab442 extract_insn(rtx_insn*)\n\trecog.cc:2299\n0xde2910 instantiate_virtual_regs_in_insn\n\tfunction.cc:1620",
+    "root_cause": "The backend instruction selector attempted to generate an AVX2 256-bit unaligned load pattern for an atypical vector permutation without matching machine description constraints.",
+    "workaround": "Disable vectorization passes with -fno-tree-vectorize or downgrade optimization to -O2 for affected compilation units."
+  },
+  {
+    "bug_id": "LLVM-54128",
+    "compiler": "clang",
+    "version": "14.0.0",
+    "category": "Loop Optimization / Vectorizer",
+    "flags": "-O3 -march=native",
+    "crash_signature": "clang: /root/llvm-project/llvm/lib/Transforms/Vectorize/LoopVectorize.cpp:4512: void llvm::LoopVectorizationCostModel::collectLoopCounters(): Assertion `TheLoop->getLoopPreheader() && \"Loop must have a preheader\"' failed.\n#0 0x00007f9c81123456 llvm::sys::PrintStackTrace(llvm::raw_ostream&, int)\n#1 0x00007f9c81121000 llvm::LoopVectorizePass::run(llvm::Function&, llvm::AnalysisManager<llvm::Function>&)",
+    "root_cause": "LoopVectorizePass ran after an unrolling pass destroyed the canonical loop preheader, violating LoopInfo invariants in complex pointer alias loops.",
+    "workaround": "Supply -fno-vectorize or add #pragma clang loop vectorize(disable) directly above the inner pointer iteration loop."
+  },
+  {
+    "bug_id": "GCC-89210",
+    "compiler": "gcc",
+    "version": "10.3.0",
+    "category": "Strict Aliasing / Tree-SSA GVN",
+    "flags": "-O3 -fstrict-aliasing",
+    "crash_signature": "internal compiler error: in tree_to_shwi, at tree.h:4602\n0xa12344 tree_to_shwi(tree_node const*)\n\ttree.h:4602\n0xbf1102 vn_reference_lookup_3(ao_ref*, tree_node*, void*, void**)\n\ttree-ssa-sccvn.c:2654\n0xbf3389 visit_reference_op_load\n\ttree-ssa-sccvn.c:4890",
+    "root_cause": "Global Value Numbering (SCCVN) encountered an unrepresentable signed host wide integer offset when analyzing reinterpret_cast pointer arithmetic crossing structure boundaries.",
+    "workaround": "Compile with -fno-strict-aliasing or replace manual pointer offsetting with std::memcpy."
+  },
+  {
+    "bug_id": "LLVM-61204",
+    "compiler": "clang",
+    "version": "16.0.0",
+    "category": "Register Allocator / Inline Assembly",
+    "flags": "-O3",
+    "crash_signature": "fatal error: error in backend: inline assembly requires more registers than available for constraints '=&r,r,r,r,r'\nclang++: error: clang frontend command failed with exit code 70",
+    "root_cause": "Greedy Register Allocator failed to resolve simultaneous hard clobber constraints and input register requirements inside a templated inline assembly loop.",
+    "workaround": "Break up monolithic inline assembly into smaller asm statements or pass variables through memory clobber references ('m' instead of 'r')."
+  },
+  {
+    "bug_id": "GCC-104992",
+    "compiler": "gcc",
+    "version": "13.1.0",
+    "category": "Frontend Parser / Type Deduction",
+    "flags": "-O2 -std=c++20",
+    "crash_signature": "internal compiler error: in tsubst_copy, at cp/pt.cc:17180\n0x7b8890 tsubst_copy(tree_node*, tree_node*, int, tree_node*)\n\tcp/pt.cc:17180\n0x7ba122 tsubst_expr(tree_node*, tree_node*, int, tree_node*, bool)\n\tcp/pt.cc:18944\nPlease submit a full bug report,",
+    "root_cause": "Template argument substitution crash when deducing return type of generic lambda inside a requires-clause with unexpanded parameter pack.",
+    "workaround": "Explicitly specify the trailing return type -> auto or specify return type concretely in lambda declarations."
+  },
+  {
+    "bug_id": "LLVM-49811",
+    "compiler": "clang",
+    "version": "13.0.1",
+    "category": "Atomic Memory / Concurrency Lowering",
+    "flags": "-O3 -fsanitize=thread",
+    "crash_signature": "clang: /root/llvm-project/llvm/lib/CodeGen/SelectionDAG/SelectionDAGBuilder.cpp:4918: void llvm::SelectionDAGBuilder::visitAtomicLoad(const llvm::LoadInst&): Assertion `L->isAtomic() && \"Expected atomic load\"' failed.",
+    "root_cause": "ThreadSanitizer instrumentation pass corrupted atomic load metadata during lower-level SelectionDAG builder lowering of unaligned atomic structs.",
+    "workaround": "Ensure atomic objects satisfy std::atomic<T>::is_always_lock_free and are strictly aligned using alignas(sizeof(T))."
+  },
+  {
+    "bug_id": "GCC-96205",
+    "compiler": "gcc",
+    "version": "10.2.0",
+    "category": "Dead Code Elimination / Control Flow Graph",
+    "flags": "-O3 -flto",
+    "crash_signature": "internal compiler error: Segmentation fault in remove_edge\n0x981240 remove_edge(edge_def*)\n\tcfganal.cc:184\n0xb41299 cleanup_empty_eh(basic_block_def*)\n\ttree-eh.cc:4210\n0xb42011 execute_cleanup_eh\n\ttree-eh.cc:4490",
+    "root_cause": "Link-Time Optimization (LTO) cross-module inlining produced dangling exception handling (EH) landing pad edges leading to a null pointer dereference in CFG edge cleanup.",
+    "workaround": "Compile with -fno-lto or add -fno-exceptions for performance-critical inner kernels."
+  },
+  {
+    "bug_id": "LLVM-58902",
+    "compiler": "clang",
+    "version": "15.0.2",
+    "category": "Instruction Selection / TableGen",
+    "flags": "-O2",
+    "crash_signature": "fatal error: error in backend: Cannot select: t45: i64 = any_extend t32\nIn function: _Z15stress_pipelinev\nclang: error: clang frontend command failed due to signal: Aborted",
+    "root_cause": "DAGCombiner produced an illegal type legalizer state with an unpromoted any_extend on an intermediate 8-bit integer result before vector bitcast.",
+    "workaround": "Cast sub-word integer types explicitly to uint32_t or uint64_t before invoking bitwise or vector conversion intrinsics."
+  },
+  {
+    "bug_id": "GCC-107771",
+    "compiler": "gcc",
+    "version": "13.2.0",
+    "category": "Loop Optimization / IVOpts",
+    "flags": "-O3 -funroll-loops",
+    "crash_signature": "internal compiler error: in determine_iv_costs, at tree-ssa-loop-ivopts.cc:6012\n0xdf012a determine_iv_costs(ivopts_data*)\n\ttree-ssa-loop-ivopts.cc:6012\n0xdf4880 tree_ssa_iv_optimize_loop\n\ttree-ssa-loop-ivopts.cc:7720",
+    "root_cause": "Induction Variable Optimization (IVOpts) encountered integer overflow when calculating cost metrics for heavily unrolled loops with non-constant strides.",
+    "workaround": "Compile without -funroll-loops or tune IV optimization with -fno-ivopts."
+  },
+  {
+    "bug_id": "GCC-93590",
+    "compiler": "gcc",
+    "version": "9.3.0",
+    "category": "Volatile Memory / Tree Optimizer",
+    "flags": "-O3",
+    "crash_signature": "internal compiler error: verify_gimple failed\nnon-trivial conversion at assignment\nvolatile uint32_t\nuint32_t\n# .MEM_4 = VDEF <.MEM_3>\nregs.CONTROL = 1;\ninternal compiler error: in verify_gimple_stmt, at tree-cfg.cc:5134",
+    "root_cause": "GIMPLE optimization pass stripped volatile qualifier attributes during constant propagation across union structs, triggering GIMPLE verification assert.",
+    "workaround": "Access hardware register fields via volatile pointers directly rather than aggregated struct instances."
+  },
+  {
+    "bug_id": "LLVM-63301",
+    "compiler": "clang",
+    "version": "16.0.4",
+    "category": "Frontend Parser / Constexpr Evaluation",
+    "flags": "-O1 -std=c++20",
+    "crash_signature": "clang: /root/llvm-project/clang/lib/AST/ExprConstant.cpp:8920: bool Evaluate(clang::APValue&, (anonymous namespace)::EvalInfo&, const clang::Expr*): Assertion `!Expr->isValueDependent() && \"Expression evaluator cannot evaluate value-dependent expr\"' failed.",
+    "root_cause": "Clang constexpr interpreter evaluated a template dependent expression prematurely before complete SFINAE substitution finished.",
+    "workaround": "Wrap constexpr conditions inside std::is_constant_evaluated() checks or evaluate non-dependent sub-expressions separately."
+  }
+]
