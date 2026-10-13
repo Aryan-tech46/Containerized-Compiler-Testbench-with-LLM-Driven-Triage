@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+import requests
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -54,11 +55,16 @@ class TriageReport(BaseModel):
         ...,
         description="Actionable compiler flag workarounds or AST source patch suggestions"
     )
+    provider: str = Field(
+        default="Gemini",
+        description="LLM provider that performed the triage (e.g. Gemini, Grok, or Offline Heuristic)"
+    )
 
     def to_markdown(self) -> str:
         """Renders the triage report in clean GitHub Markdown format."""
         return (
             f"### [TRIAGE REPORT] Compiler Crash Analysis\n\n"
+            f"- **Triage Provider:** `{self.provider}`\n"
             f"- **Bug Category:** `{self.bug_category}`\n"
             f"- **Historical Match:** `{self.historical_match_id}` ({self.similarity_confidence})\n\n"
             f"#### Root Cause Analysis\n"
@@ -88,27 +94,31 @@ Do not wrap your JSON in any extra conversational text. Output only the JSON obj
 
 
 class CompilerTriageAgent:
-    """Orchestrates LLM triage with multi-model fallback chain and heuristic backup."""
+    """Orchestrates multi-provider LLM triage (Gemini + Grok) with heuristic backup."""
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        gemini_api_key: Optional[str] = None,
+        grok_api_key: Optional[str] = None,
         primary_model: str = "gemini-2.5-flash",
         secondary_model: str = "gemini-1.5-flash",
+        grok_model: str = "grok-2-latest",
     ):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY", "")
+        self.grok_api_key = grok_api_key or os.getenv("GROK_API_KEY", "") or os.getenv("XAI_API_KEY", "")
         self.primary_model = primary_model
         self.secondary_model = secondary_model
+        self.grok_model = grok_model
 
-        if self.api_key and genai is not None:
+        if self.gemini_api_key and genai is not None:
             try:
-                genai.configure(api_key=self.api_key)
+                genai.configure(api_key=self.gemini_api_key)
             except Exception:
                 pass
 
     def _call_gemini_model(self, model_name: str, prompt: str) -> Optional[str]:
         """Calls a specific Gemini model via the SDK."""
-        if not self.api_key or genai is None:
+        if not self.gemini_api_key or genai is None:
             return None
 
         try:
@@ -124,6 +134,48 @@ class CompilerTriageAgent:
             # Fallback to next model
             pass
         return None
+
+    def _call_grok_model(self, prompt: str) -> Optional[str]:
+        """Calls xAI's Grok API via standard OpenAI-compatible completions endpoint."""
+        if not self.grok_api_key:
+            return None
+
+        url = "https://api.x.ai/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.grok_api_key}",
+        }
+        payload = {
+            "model": self.grok_model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+        }
+
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=25)
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                return content.strip()
+        except Exception:
+            # Fallback to next tier
+            pass
+        return None
+
+    def _clean_and_parse_json(self, raw_text: str) -> Optional[Dict[str, Any]]:
+        """Extracts and parses JSON from raw LLM responses."""
+        try:
+            clean = re.sub(r"^```json\s*", "", raw_text.strip())
+            clean = re.sub(r"\s*```$", "", clean).strip()
+            # If wrapped in other markdown backticks
+            if clean.startswith("```"):
+                clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            return json.loads(clean)
+        except Exception:
+            return None
 
     def _heuristic_triage(
         self,
@@ -164,6 +216,7 @@ class CompilerTriageAgent:
             similarity_confidence=conf_str,
             root_cause_analysis=root_cause,
             recommended_mitigation=mitigation,
+            provider="Offline Heuristic Engine",
         )
 
     def triage(
@@ -171,11 +224,11 @@ class CompilerTriageAgent:
         raw_crash_log: str,
         retrieved_context: List[Dict[str, Any]],
     ) -> TriageReport:
-        """Executes the triage fallback chain:
+        """Executes the multi-provider triage fallback chain:
 
-        1. Primary Gemini model
-        2. Secondary Gemini fallback model
-        3. Local heuristic compiler expert engine
+        1. Primary Chain: Gemini (Gemini 2.5 Flash -> Gemini 1.5 Flash)
+        2. Secondary Chain: Grok / xAI (Grok 2)
+        3. Tertiary Chain: Deterministic Local Heuristic Engine
         """
         # Format context prompt
         context_str = json.dumps(retrieved_context, indent=2)
@@ -185,20 +238,24 @@ class CompilerTriageAgent:
             f"Analyze the crash and provide your structured JSON triage report."
         )
 
-        # 1. Try Primary LLM
+        # 1. Primary Chain: Gemini Models
         for model in [self.primary_model, self.secondary_model]:
             raw_response = self._call_gemini_model(model, prompt)
             if raw_response:
-                try:
-                    # Clean markdown codeblocks if present
-                    clean_json = re.sub(r"^```json\s*", "", raw_response)
-                    clean_json = re.sub(r"\s*```$", "", clean_json).strip()
-                    data = json.loads(clean_json)
-                    return TriageReport(**data)
-                except Exception:
-                    continue
+                parsed = self._clean_and_parse_json(raw_response)
+                if parsed:
+                    parsed["provider"] = f"Gemini ({model})"
+                    return TriageReport(**parsed)
 
-        # 2. Resilient Heuristic Fallback
+        # 2. Secondary Chain: Grok (xAI)
+        raw_grok = self._call_grok_model(prompt)
+        if raw_grok:
+            parsed = self._clean_and_parse_json(raw_grok)
+            if parsed:
+                parsed["provider"] = f"xAI Grok ({self.grok_model})"
+                return TriageReport(**parsed)
+
+        # 3. Tertiary Chain: Resilient Heuristic Fallback
         return self._heuristic_triage(raw_crash_log, retrieved_context)
 
 

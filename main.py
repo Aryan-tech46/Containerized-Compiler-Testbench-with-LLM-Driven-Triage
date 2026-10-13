@@ -79,11 +79,18 @@ def print_system_diagnostics(
         else "[yellow]Local Fallback Vector Engine[/yellow] (In-Memory Cosine Store)"
     )
 
-    llm_status = (
-        f"[green]Gemini API Active[/green] ({triage_agent.primary_model})"
-        if triage_agent.api_key and triage_agent.primary_model
-        else "[yellow]Offline Heuristic Compiler Agent[/yellow] (Deterministic Rulebase)"
-    )
+    # LLM Provider chains
+    gemini_active = bool(triage_agent.gemini_api_key)
+    grok_active = bool(triage_agent.grok_api_key)
+
+    if gemini_active and grok_active:
+        llm_status = f"[green]Multi-Provider Active[/green] (1: Gemini Flash, 2: Grok 2)"
+    elif gemini_active:
+        llm_status = f"[green]Gemini Active[/green] ({triage_agent.primary_model})" + " | [dim]Grok: Unconfigured[/dim]"
+    elif grok_active:
+        llm_status = f"[green]Grok Active[/green] ({triage_agent.grok_model})" + " | [dim]Gemini: Unconfigured[/dim]"
+    else:
+        llm_status = "[yellow]Offline Heuristic Compiler Agent[/yellow] (Deterministic Rulebase)"
 
     cache_status = (
         f"[green]Redis Online[/green] ({cache.host}:{cache.port})"
@@ -101,16 +108,16 @@ def print_system_diagnostics(
         table.add_column("Status & Driver", style="white")
         table.add_row("Docker Sandbox", docker_status)
         table.add_row("RAG Vector Store", rag_status)
-        table.add_row("AI Triage Engine", llm_status)
+        table.add_row("AI Triage Chains", llm_status)
         table.add_row("Report Cache", cache_status)
         console.print(table)
         console.print()
     else:
         print("=== Runtime Diagnostics & Environment Status ===")
-        print(f"Docker Sandbox:  {docker_status}")
-        print(f"RAG Vector Store: {rag_status}")
-        print(f"AI Triage Engine: {llm_status}")
-        print(f"Report Cache:    {cache_status}\n")
+        print(f"Docker Sandbox:   {docker_status}")
+        print(f"RAG Vector Store:  {rag_status}")
+        print(f"AI Triage Chains:  {llm_status}")
+        print(f"Report Cache:     {cache_status}\n")
 
 
 def parse_arguments() -> argparse.Namespace:
