@@ -14,7 +14,7 @@ alwaysApply: true
 ## Directory Structure
 Enforce the following modular architecture:
 ```text
-antigravity/
+CompilerTriageEngine/
 ├── .cursorrules           # This file
 ├── docker/                # Dockerfiles for compiler test environments
 │   ├── Dockerfile.gcc
