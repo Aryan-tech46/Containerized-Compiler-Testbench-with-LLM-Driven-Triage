@@ -232,7 +232,16 @@ def run_test_and_triage(
         # Render Triage Report
         md_output = report.to_markdown()
         if console:
-            console.print(Panel(Markdown(md_output), title=f"Triage Analysis: {test_name} ({compiler_tag})", border_style="red"))
+            console.print()
+            console.print(
+                Panel(
+                    Markdown(md_output),
+                    title=f"Triage Analysis: {test_name} ({compiler_tag})",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            console.print()
         else:
             print("\n" + md_output + "\n")
 
@@ -355,7 +364,9 @@ def main() -> int:
                     str(sum(1 for r in sub_results if r["status"] == "CRASH")),
                 )
 
-        console.print("\n", table)
+        console.print()
+        console.print(table)
+        console.print()
     else:
         print("\n=== Testbench Compilation Summary ===")
         print(f"Total: {total_count} | Passed: {pass_count} | Compile Errors: {err_count} | Crashes: {crash_count}\n")

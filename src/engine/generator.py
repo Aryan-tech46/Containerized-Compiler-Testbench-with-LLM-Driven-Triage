@@ -2,29 +2,46 @@
 
 Generates syntactically valid yet highly complex C++ source files targeting
 known compiler stress areas:
-1. Deep template metaprogramming recursion
+1. Deep template metaprogramming recursion (SFINAE & C++20 concepts)
 2. Complex pointer arithmetic and aliasing
 3. Heavy inline assembly and volatile memory manipulation
 4. Concurrency edge cases with uninitialized memory
+5. Tree-SSA auto-vectorizer and loop transformation stress
+6. Deep inliner call chains and generic lambda closures
 """
 
+import json
 import os
 import random
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Dict, Any, Optional, Tuple
+
+
+@dataclass
+class TestMetadata:
+    """Rich metadata describing a generated synthetic test case."""
+    filepath: str
+    category: str
+    target_pass: str
+    expected_outcome: str  # "PASS" | "COMPILE_ERROR" | "STRESS"
+    compiler_flags: str
+    description: str
 
 
 class CompilerTestGenerator:
     """Generates synthetic C++ edge-case source files designed to stress compilers."""
 
     def __init__(self, seed: Optional[int] = None):
-        if seed is not None:
-            random.seed(seed)
+        self.rng = random.Random(seed)
 
     def generate_template_recursion(self, depth: int = 450) -> str:
         """Emits C++ source code with deep template recursion and SFINAE type lists."""
+        types = ["int", "long", "short", "unsigned int", "char"]
+        chosen_type = self.rng.choice(types)
+
         return f"""// Stress Category: Deep Template Metaprogramming Recursion
-// Target Depth: {depth}
+// Target Depth: {depth} | Base Type: {chosen_type}
 #include <iostream>
 #include <type_traits>
 
@@ -67,14 +84,14 @@ struct PeanoNat<0> {{
 template <int Depth>
 struct DeepTemplateChain : DeepTemplateChain<Depth - 1> {{
     using Sub = DeepTemplateChain<Depth - 1>;
-    constexpr int compute() const {{
-        return Depth + Sub::compute();
+    constexpr {chosen_type} compute() const {{
+        return static_cast<{chosen_type}>(Depth) + Sub::compute();
     }}
 }};
 
 template <>
 struct DeepTemplateChain<0> {{
-    constexpr int compute() const {{
+    constexpr {chosen_type} compute() const {{
         return 0;
     }}
 }};
@@ -88,7 +105,7 @@ constexpr auto sfinae_check(T val) -> decltype(val + 1) {{
 int main() {{
     constexpr auto fact_val = RecursiveFactorial<{min(depth, 20)}>::value;
     DeepTemplateChain<{min(depth, 500)}> chain;
-    volatile int res = chain.compute();
+    volatile {chosen_type} res = chain.compute();
     volatile auto sfinae_res = sfinae_check(res);
     (void)fact_val;
     (void)sfinae_res;
@@ -101,6 +118,8 @@ int main() {{
 
         reinterpret_cast stress, and strict aliasing barriers.
         """
+        xor_mask = self.rng.choice([0xDEADBEEFCAFEBABE, 0x123456789ABCDEF0, 0xA5A5A5A55A5A5A5A])
+
         return f"""// Stress Category: Complex Pointer Arithmetic and Aliasing
 #include <iostream>
 #include <cstdint>
@@ -122,7 +141,7 @@ void stress_aliasing(volatile char* buffer, size_t len) {{
     AliasingUnion* u_ptr = reinterpret_cast<AliasingUnion*>(aligned_addr);
     
     for (size_t i = 0; i < 4; ++i) {{
-        u_ptr->u64[i] = 0xDEADBEEFCAFEBABEULL ^ (i * 0x101010101010101ULL);
+        u_ptr->u64[i] = 0x{xor_mask:X}ULL ^ (i * 0x101010101010101ULL);
     }}
     
     // Strict aliasing stress: pointer reinterpretation across types
@@ -151,20 +170,22 @@ int main() {{
 
     def generate_inline_asm_volatile(self) -> str:
         """Emits C++ code stressing inline assembly constraints, clobbers, and volatile memory."""
-        return """// Stress Category: Heavy Inline Assembly and Volatile Memory Manipulation
+        xor_key = self.rng.choice([0x55AA55AA, 0x0F0F0F0F, 0xDEADBEEF])
+
+        return f"""// Stress Category: Heavy Inline Assembly and Volatile Memory Manipulation
 #include <iostream>
 #include <cstdint>
 
 // Volatile hardware register emulation
-struct HardwareRegisterBlock {
+struct HardwareRegisterBlock {{
     volatile uint32_t CONTROL;
     volatile uint32_t STATUS;
     volatile uint32_t DATA_IN;
     volatile uint32_t DATA_OUT;
-};
+}};
 
-void execute_asm_pipeline(uint32_t* input, uint32_t* output, size_t count) {
-    for (size_t i = 0; i < count; ++i) {
+void execute_asm_pipeline(uint32_t* input, uint32_t* output, size_t count) {{
+    for (size_t i = 0; i < count; ++i) {{
         uint32_t in_val = input[i];
         uint32_t out_val = 0;
 
@@ -173,7 +194,7 @@ void execute_asm_pipeline(uint32_t* input, uint32_t* output, size_t count) {
             "movl %1, %%eax\\n\\t"
             "bswapl %%eax\\n\\t"
             "roll $13, %%eax\\n\\t"
-            "xorl $0x55AA55AA, %%eax\\n\\t"
+            "xorl $0x{xor_key:X}, %%eax\\n\\t"
             "movl %%eax, %0\\n\\t"
             : "=r" (out_val)
             : "r" (in_val)
@@ -191,18 +212,18 @@ void execute_asm_pipeline(uint32_t* input, uint32_t* output, size_t count) {
 #else
         out_val = ((in_val >> 24) & 0xff) | ((in_val << 8) & 0xff0000) |
                   ((in_val >> 8) & 0xff00) | ((in_val << 24) & 0xff000000);
-        out_val ^= 0x55AA55AA;
+        out_val ^= 0x{xor_key:X};
 #endif
 
         output[i] = out_val;
-    }
-}
+    }}
+}}
 
-int main() {
-    alignas(64) uint32_t src[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
-    alignas(64) uint32_t dst[16] = {0};
+int main() {{
+    alignas(64) uint32_t src[16] = {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}};
+    alignas(64) uint32_t dst[16] = {{0}};
     
-    HardwareRegisterBlock regs = {0, 0, 0, 0};
+    HardwareRegisterBlock regs = {{0, 0, 0, 0}};
     regs.CONTROL = 0x01;
     
     execute_asm_pipeline(src, dst, 16);
@@ -211,12 +232,14 @@ int main() {
     regs.STATUS = 0x02;
     
     return (regs.STATUS == 0x02) ? 0 : 1;
-}
+}}
 """
 
     def generate_concurrency_edge_case(self) -> str:
         """Emits C++ code with atomics, relaxed memory order, and uninitialized memory storage."""
-        return """// Stress Category: Concurrency Edge Cases with Uninitialized Memory
+        slots_count = self.rng.choice([4, 8, 16])
+
+        return f"""// Stress Category: Concurrency Edge Cases with Uninitialized Memory
 #include <iostream>
 #include <atomic>
 #include <thread>
@@ -224,18 +247,18 @@ int main() {
 #include <new>
 #include <cstring>
 
-struct ComplexPayload {
+struct ComplexPayload {{
     uint64_t id;
     double metrics[4];
     char flag_buffer[16];
-};
+}};
 
-struct LockFreeQueueSlot {
-    std::atomic<bool> is_ready{false};
+struct LockFreeQueueSlot {{
+    std::atomic<bool> is_ready{{false}};
     alignas(alignof(ComplexPayload)) std::byte storage[sizeof(ComplexPayload)];
-};
+}};
 
-void worker_produce(LockFreeQueueSlot& slot, uint64_t id) {
+void worker_produce(LockFreeQueueSlot& slot, uint64_t id) {{
     // Construct in-place in raw uninitialized storage
     ComplexPayload* payload = reinterpret_cast<ComplexPayload*>(slot.storage);
     payload->id = id;
@@ -247,32 +270,147 @@ void worker_produce(LockFreeQueueSlot& slot, uint64_t id) {
 
     // Release fence ensures writes are visible before ready flag
     slot.is_ready.store(true, std::memory_order_release);
-}
+}}
 
-bool worker_consume(LockFreeQueueSlot& slot, uint64_t expected_id) {
-    if (slot.is_ready.load(std::memory_order_acquire)) {
+bool worker_consume(LockFreeQueueSlot& slot, uint64_t expected_id) {{
+    if (slot.is_ready.load(std::memory_order_acquire)) {{
         ComplexPayload* payload = reinterpret_cast<ComplexPayload*>(slot.storage);
         return payload->id == expected_id && payload->flag_buffer[0] == 0x7F;
-    }
+    }}
     return false;
+}}
+
+int main() {{
+    constexpr size_t NUM_SLOTS = {slots_count};
+    LockFreeQueueSlot slots[NUM_SLOTS];
+
+    for (size_t i = 0; i < NUM_SLOTS; ++i) {{
+        worker_produce(slots[i], 1000 + i);
+    }}
+
+    bool all_valid = true;
+    for (size_t i = 0; i < NUM_SLOTS; ++i) {{
+        if (!worker_consume(slots[i], 1000 + i)) {{
+            all_valid = false;
+        }}
+    }}
+
+    return all_valid ? 0 : 1;
+}}
+"""
+
+    def generate_loop_vectorizer_stress(self) -> str:
+        """Emits non-unit stride loop iterations designed to stress auto-vectorization passes (Tree-SSA / IVOpts)."""
+        stride = self.rng.choice([3, 5, 7])
+        size = self.rng.choice([1024, 2048])
+
+        return f"""// Stress Category: Loop Auto-Vectorizer & Tree-SSA Pass Stress
+// Stresses SIMD widening and Induction Variable Optimization (IVOpts)
+#include <iostream>
+#include <vector>
+#include <cmath>
+
+#pragma GCC optimize("O3")
+
+void execute_vector_stress(float* __restrict__ a, float* __restrict__ b, float* __restrict__ out, size_t n) {{
+    // Multiple induction variables with non-unit strides and pointer aliasing hints
+    #pragma GCC ivdep
+    for (size_t i = 0; i < n - {stride}; i += {stride}) {{
+        float temp1 = a[i] * b[i + 1] + 1.41421f;
+        float temp2 = std::sqrt(std::abs(b[i] * a[i + 2])) + 2.71828f;
+        out[i] = (temp1 > temp2) ? temp1 * 0.5f : temp2 * 1.5f;
+        out[i + 1] = out[i] + a[i + 2];
+    }}
+}}
+
+int main() {{
+    constexpr size_t N = {size};
+    alignas(64) float arr_a[N];
+    alignas(64) float arr_b[N];
+    alignas(64) float arr_out[N];
+
+    for (size_t i = 0; i < N; ++i) {{
+        arr_a[i] = static_cast<float>(i % 17) * 0.1f;
+        arr_b[i] = static_cast<float>(i % 23) * 0.2f;
+        arr_out[i] = 0.0f;
+    }}
+
+    execute_vector_stress(arr_a, arr_b, arr_out, N);
+    return (arr_out[0] != 0.0f) ? 0 : 1;
+}}
+"""
+
+    def generate_cpp20_concepts_stress(self) -> str:
+        """Emits C++20 recursive concepts and requires-clause constraint satisfaction stress."""
+        return """// Stress Category: C++20 Concepts & Nested Requires Constraints
+// Stresses frontend AST constraint satisfaction and fold expression deduction
+#include <iostream>
+#include <concepts>
+#include <type_traits>
+
+template <typename T>
+concept ArithmeticScalar = std::is_arithmetic_v<T>;
+
+template <typename T>
+concept NestedTransformable = requires(T a) {
+    { a * 2 } -> std::same_as<T>;
+    { a + 1 } -> std::convertible_to<int>;
+};
+
+template <typename T>
+concept DeeplyConstrained = ArithmeticScalar<T> && NestedTransformable<T> && requires(T val) {
+    requires sizeof(T) <= 8;
+    requires (sizeof(val) > 0);
+};
+
+// Recursive constraint evaluation across type packs
+template <typename Head, typename... Tail>
+requires DeeplyConstrained<Head> && (DeeplyConstrained<Tail> && ...)
+constexpr auto evaluate_pack(Head h, Tail... tail) {
+    if constexpr (sizeof...(tail) == 0) {
+        return h;
+    } else {
+        return h + evaluate_pack(tail...);
+    }
 }
 
 int main() {
-    constexpr size_t NUM_SLOTS = 8;
-    LockFreeQueueSlot slots[NUM_SLOTS];
+    auto res = evaluate_pack(10, 20L, 30.5f);
+    (void)res;
+    return 0;
+}
+"""
 
-    for (size_t i = 0; i < NUM_SLOTS; ++i) {
-        worker_produce(slots[i], 1000 + i);
-    }
+    def generate_deep_inliner_stress(self) -> str:
+        """Emits deeply nested inline call chains and generic lambda closures to stress inliner tree depth."""
+        return """// Stress Category: Deep Inliner Call Chains & Generic Lambdas
+// Stresses GIMPLE inliner pass and devirtualization tree depth
+#include <iostream>
 
-    bool all_valid = true;
-    for (size_t i = 0; i < NUM_SLOTS; ++i) {
-        if (!worker_consume(slots[i], 1000 + i)) {
-            all_valid = false;
-        }
-    }
+#define ALWAYS_INLINE __attribute__((always_inline)) inline
 
-    return all_valid ? 0 : 1;
+ALWAYS_INLINE int stage_10(int x) { return x ^ 0xA5; }
+ALWAYS_INLINE int stage_9(int x)  { return stage_10(x + 1) * 2; }
+ALWAYS_INLINE int stage_8(int x)  { return stage_9(x - 3) ^ 0x55; }
+ALWAYS_INLINE int stage_7(int x)  { return stage_8(x * 3) + 7; }
+ALWAYS_INLINE int stage_6(int x)  { return stage_7(x + 2) ^ 0x33; }
+ALWAYS_INLINE int stage_5(int x)  { return stage_6(x * 2) - 5; }
+ALWAYS_INLINE int stage_4(int x)  { return stage_5(x + 4) ^ 0x0F; }
+ALWAYS_INLINE int stage_3(int x)  { return stage_4(x - 1) + 9; }
+ALWAYS_INLINE int stage_2(int x)  { return stage_3(x * 4) ^ 0xFF; }
+ALWAYS_INLINE int stage_1(int x)  { return stage_2(x + 5) - 3; }
+
+int main() {
+    // Nested generic lambda invocation passing through always_inline chain
+    auto dispatcher = [](auto val, auto next_fn) ALWAYS_INLINE {
+        return next_fn(val) + 1;
+    };
+
+    int result = dispatcher(42, [](int v) ALWAYS_INLINE {
+        return stage_1(v);
+    });
+
+    return (result != 0) ? 0 : 1;
 }
 """
 
@@ -374,6 +512,194 @@ int main() {
 }
 """
 
+    def generate_cpp20_concept_cycle_violation(self) -> str:
+        """Emits mutually recursive concept constraints to stress frontend dependency cycles."""
+        return """// Stress Category: Recursive Concept Dependency Cycle
+// Provokes circular concept constraint satisfaction failure
+#include <concepts>
+
+template <typename T>
+concept ConceptA = requires(T a) {
+    { a.process() };
+};
+
+template <typename T>
+concept ConceptB = ConceptA<T> && requires(T b) {
+    { b.validate() };
+};
+
+// Deliberately violates concept contract on non-conforming struct
+struct NonConforming {
+    void process() {}
+};
+
+template <ConceptB T>
+void execute_safe(T obj) {
+    obj.validate();
+}
+
+int main() {
+    NonConforming item;
+    execute_safe(item); // Constraint failure: item does not satisfy ConceptB
+    return 0;
+}
+"""
+
+    def generate_suite_with_metadata(
+        self,
+        output_dir: str = "compiler_tests",
+        count: int = 4,
+        mode: str = "balanced",
+    ) -> List[TestMetadata]:
+        """Dynamically emits C++ source files and returns rich metadata for each test case.
+
+        Args:
+            output_dir: Destination folder path for generated .cpp test files.
+            count: Number of test files to emit.
+            mode: 'valid-only' | 'balanced' | 'aggressive'
+
+        Returns:
+            List of TestMetadata objects describing the generated test suite.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        valid_entries: List[Tuple[str, str, str, str, str, Any]] = [
+            (
+                "valid_template_recursion",
+                "Frontend Parser / Template Metaprogramming",
+                "Template Instantiation Pass",
+                "PASS",
+                "-O3 -std=c++20",
+                lambda i: self.generate_template_recursion(depth=300 + (i * 50)),
+            ),
+            (
+                "valid_pointer_aliasing",
+                "Strict Aliasing / Pointer Arithmetic",
+                "Tree-SSA SCCVN Pass",
+                "PASS",
+                "-O3 -fstrict-aliasing",
+                lambda i: self.generate_pointer_aliasing(dimensions=8 + (i * 4)),
+            ),
+            (
+                "valid_inline_asm",
+                "Register Allocator / Inline Assembly",
+                "Backend Instruction Selection",
+                "PASS",
+                "-O3",
+                lambda i: self.generate_inline_asm_volatile(),
+            ),
+            (
+                "valid_concurrency_atomic",
+                "Atomic Memory / Concurrency Lowering",
+                "SelectionDAG Atomic Lowering",
+                "PASS",
+                "-O3 -std=c++20",
+                lambda i: self.generate_concurrency_edge_case(),
+            ),
+            (
+                "valid_vectorizer_stress",
+                "Loop Auto-Vectorizer / Tree-SSA",
+                "LoopVectorizePass / IVOpts",
+                "PASS",
+                "-O3 -ftree-vectorize",
+                lambda i: self.generate_loop_vectorizer_stress(),
+            ),
+            (
+                "valid_cpp20_concepts",
+                "Frontend Parser / C++20 Concepts",
+                "Constraint Satisfaction Evaluator",
+                "PASS",
+                "-O3 -std=c++20",
+                lambda i: self.generate_cpp20_concepts_stress(),
+            ),
+            (
+                "valid_deep_inliner",
+                "Dead Code Elimination / Function Inliner",
+                "GIMPLE Inliner Pass",
+                "PASS",
+                "-O3 -finline-functions",
+                lambda i: self.generate_deep_inliner_stress(),
+            ),
+        ]
+
+        edge_entries: List[Tuple[str, str, str, str, str, Any]] = [
+            (
+                "edge_depth_overflow",
+                "Frontend Parser / Template Substitution",
+                "Template Depth Cutoff",
+                "COMPILE_ERROR",
+                "-O3 -std=c++20",
+                lambda i: self.generate_template_depth_overflow(depth=1500),
+            ),
+            (
+                "edge_asm_reg_exhaustion",
+                "Register Allocator / Inline Assembly",
+                "Greedy Register Allocator Reload",
+                "COMPILE_ERROR",
+                "-O3",
+                lambda i: self.generate_inline_asm_register_exhaustion(),
+            ),
+            (
+                "edge_ambiguous_sfinae",
+                "Frontend Parser / Overload Resolution",
+                "Template Overload Disambiguation",
+                "COMPILE_ERROR",
+                "-O3 -std=c++17",
+                lambda i: self.generate_ambiguous_template_overload(),
+            ),
+            (
+                "edge_constexpr_limit",
+                "Frontend Parser / Constexpr Evaluation",
+                "Constexpr Step Interpreter",
+                "COMPILE_ERROR",
+                "-O3 -std=c++20",
+                lambda i: self.generate_constexpr_step_limit_violation(),
+            ),
+            (
+                "edge_concept_cycle",
+                "Frontend Parser / C++20 Concepts",
+                "Concept Constraint Verification",
+                "COMPILE_ERROR",
+                "-O3 -std=c++20",
+                lambda i: self.generate_cpp20_concept_cycle_violation(),
+            ),
+        ]
+
+        if mode == "valid-only":
+            pool = valid_entries
+        elif mode == "aggressive":
+            pool = edge_entries + [valid_entries[0]]
+        else:  # balanced
+            pool = []
+            max_len = max(len(valid_entries), len(edge_entries))
+            for i in range(max_len):
+                if i < len(valid_entries):
+                    pool.append(valid_entries[i])
+                if i < len(edge_entries):
+                    pool.append(edge_entries[i])
+
+        metadata_list: List[TestMetadata] = []
+        for idx in range(count):
+            name, cat, pass_name, expected, flags, gen_fn = pool[idx % len(pool)]
+            code = gen_fn(idx)
+            filename = f"test_{idx+1:03d}_{name}.cpp"
+            filepath = os.path.join(output_dir, filename)
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(code)
+
+            meta = TestMetadata(
+                filepath=filepath,
+                category=cat,
+                target_pass=pass_name,
+                expected_outcome=expected,
+                compiler_flags=flags,
+                description=f"Generated synthetic stress test {filename} targeting {cat} ({pass_name}).",
+            )
+            metadata_list.append(meta)
+
+        return metadata_list
+
     def generate_suite(
         self,
         output_dir: str = "compiler_tests",
@@ -382,59 +708,15 @@ int main() {
     ) -> List[str]:
         """Dynamically emits C++ source files targeting compiler stress areas.
 
-        Args:
-            output_dir: Destination folder path for generated .cpp test files.
-            count: Number of test files to emit.
-            mode: Generation mode:
-                  - 'valid-only': Generates only fully valid C++ tests that should compile cleanly.
-                  - 'balanced': Mix of valid stress tests and boundary edge cases.
-                  - 'aggressive': Emphasizes limit-exceeding tests to trigger compiler errors and RAG triage.
-
-        Returns:
-            List of generated test file paths.
+        (Backward compatible: returns list of file paths)
         """
-        os.makedirs(output_dir, exist_ok=True)
-
-        valid_generators = [
-            ("valid_template_recursion", lambda i: self.generate_template_recursion(depth=300 + (i * 50))),
-            ("valid_pointer_aliasing", lambda i: self.generate_pointer_aliasing(dimensions=8 + (i * 4))),
-            ("valid_inline_asm", lambda i: self.generate_inline_asm_volatile()),
-            ("valid_concurrency_atomic", lambda i: self.generate_concurrency_edge_case()),
-        ]
-
-        edge_generators = [
-            ("edge_depth_overflow", lambda i: self.generate_template_depth_overflow(depth=1500)),
-            ("edge_asm_reg_exhaustion", lambda i: self.generate_inline_asm_register_exhaustion()),
-            ("edge_ambiguous_sfinae", lambda i: self.generate_ambiguous_template_overload()),
-            ("edge_constexpr_limit", lambda i: self.generate_constexpr_step_limit_violation()),
-        ]
-
-        if mode == "valid-only":
-            pool = valid_generators
-        elif mode == "aggressive":
-            pool = edge_generators + [valid_generators[0]]
-        else:  # balanced: alternate valid tests with edge limit tests
-            pool = []
-            for v, e in zip(valid_generators, edge_generators):
-                pool.append(v)
-                pool.append(e)
-
-        generated_files: List[str] = []
-        for idx in range(count):
-            name, gen_func = pool[idx % len(pool)]
-            code = gen_func(idx)
-            filename = f"test_{idx+1:03d}_{name}.cpp"
-            filepath = os.path.join(output_dir, filename)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(code)
-            generated_files.append(filepath)
-
-        return generated_files
+        metadata = self.generate_suite_with_metadata(output_dir=output_dir, count=count, mode=mode)
+        return [m.filepath for m in metadata]
 
 
 if __name__ == "__main__":
     generator = CompilerTestGenerator()
-    suite = generator.generate_suite("compiler_tests", 4)
-    print(f"Generated {len(suite)} test files:")
-    for path in suite:
-        print(f"  - {path}")
+    suite = generator.generate_suite_with_metadata("compiler_tests", 6, mode="balanced")
+    print(f"Generated {len(suite)} stress tests with metadata:")
+    for item in suite:
+        print(f"  [{item.expected_outcome}] {item.filepath} -> {item.category} ({item.target_pass})")
