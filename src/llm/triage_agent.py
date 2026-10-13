@@ -135,18 +135,29 @@ class CompilerTriageAgent:
             pass
         return None
 
-    def _call_grok_model(self, prompt: str) -> Optional[str]:
-        """Calls xAI's Grok API via standard OpenAI-compatible completions endpoint."""
-        if not self.grok_api_key:
-            return None
+    def _call_secondary_provider(self, prompt: str) -> tuple[Optional[str], str]:
+        """Calls Groq Cloud (if key starts with gsk_) or xAI Grok (if key starts with xai-)."""
+        key = self.grok_api_key
+        if not key:
+            return None, ""
 
-        url = "https://api.x.ai/v1/chat/completions"
+        if key.startswith("gsk_"):
+            # Groq Cloud ultra-fast inference
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            model = "qwen/qwen3.8-27b"
+            provider_label = f"Groq ({model})"
+        else:
+            # xAI Grok endpoint
+            url = "https://api.x.ai/v1/chat/completions"
+            model = self.grok_model
+            provider_label = f"xAI Grok ({model})"
+
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.grok_api_key}",
+            "Authorization": f"Bearer {key}",
         }
         payload = {
-            "model": self.grok_model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -159,11 +170,11 @@ class CompilerTriageAgent:
             if resp.status_code == 200:
                 data = resp.json()
                 content = data["choices"][0]["message"]["content"]
-                return content.strip()
+                return content.strip(), provider_label
         except Exception:
             # Fallback to next tier
             pass
-        return None
+        return None, ""
 
     def _clean_and_parse_json(self, raw_text: str) -> Optional[Dict[str, Any]]:
         """Extracts and parses JSON from raw LLM responses."""
@@ -247,12 +258,12 @@ class CompilerTriageAgent:
                     parsed["provider"] = f"Gemini ({model})"
                     return TriageReport(**parsed)
 
-        # 2. Secondary Chain: Grok (xAI)
-        raw_grok = self._call_grok_model(prompt)
-        if raw_grok:
-            parsed = self._clean_and_parse_json(raw_grok)
+        # 2. Secondary Chain: Groq or xAI Grok
+        raw_secondary, provider_label = self._call_secondary_provider(prompt)
+        if raw_secondary:
+            parsed = self._clean_and_parse_json(raw_secondary)
             if parsed:
-                parsed["provider"] = f"xAI Grok ({self.grok_model})"
+                parsed["provider"] = provider_label
                 return TriageReport(**parsed)
 
         # 3. Tertiary Chain: Resilient Heuristic Fallback
