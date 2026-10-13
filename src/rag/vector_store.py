@@ -53,6 +53,8 @@ class HistoricalBugVectorStore:
         self._pc: Optional[Any] = None
         self._index: Optional[Any] = None
 
+        self._init_error: Optional[str] = None
+
         if self.gemini_api_key and genai is not None:
             try:
                 genai.configure(api_key=self.gemini_api_key)
@@ -68,7 +70,15 @@ class HistoricalBugVectorStore:
 
         try:
             self._pc = Pinecone(api_key=self.api_key)
-            existing_indexes = [idx["name"] for idx in self._pc.list_indexes()]
+            indexes_info = self._pc.list_indexes()
+            existing_indexes = []
+            for item in indexes_info:
+                if hasattr(item, "name"):
+                    existing_indexes.append(item.name)
+                elif isinstance(item, dict) and "name" in item:
+                    existing_indexes.append(item["name"])
+                else:
+                    existing_indexes.append(str(item))
 
             if self.index_name not in existing_indexes and ServerlessSpec is not None:
                 try:
@@ -78,13 +88,46 @@ class HistoricalBugVectorStore:
                         metric=self.metric,
                         spec=ServerlessSpec(cloud="aws", region="us-east-1"),
                     )
-                except Exception:
-                    pass
+                except Exception as create_err:
+                    self._init_error = f"Index creation error: {str(create_err)}"
 
             self._index = self._pc.Index(self.index_name)
-        except Exception:
-            # Fallback will activate transparently
+        except Exception as e:
+            self._init_error = str(e)
             self._index = None
+
+    def test_connection(self) -> Dict[str, Any]:
+        """Tests the Pinecone connection and returns status diagnostics."""
+        if not self.api_key:
+            return {
+                "connected": False,
+                "message": "PINECONE_API_KEY is not set in environment or .env file",
+            }
+        if self._index is not None:
+            try:
+                stats = self._index.describe_index_stats()
+                vector_count = getattr(stats, "total_vector_count", None)
+                if vector_count is None and isinstance(stats, dict):
+                    vector_count = stats.get("total_vector_count", 0)
+                dim = getattr(stats, "dimension", None)
+                if dim is None and isinstance(stats, dict):
+                    dim = stats.get("dimension", self.dimension)
+                return {
+                    "connected": True,
+                    "index_name": self.index_name,
+                    "total_vector_count": vector_count if vector_count is not None else 0,
+                    "dimension": dim if dim is not None else self.dimension,
+                    "message": "Successfully connected to Pinecone index",
+                }
+            except Exception as e:
+                return {
+                    "connected": False,
+                    "message": f"Connected to client, but failed to query index: {str(e)}",
+                }
+        return {
+            "connected": False,
+            "message": f"Pinecone initialization failed: {self._init_error or 'Unknown error'}",
+        }
 
     def _simple_text_embedding(self, text: str, dim: int = 768) -> List[float]:
         """Generates a deterministic pseudo-semantic dense vector for offline/mock embedding."""
@@ -194,19 +237,27 @@ class HistoricalBugVectorStore:
                     top_k=top_k,
                     include_metadata=True,
                 )
+                matches_list = getattr(response, "matches", None)
+                if matches_list is None and isinstance(response, dict):
+                    matches_list = response.get("matches", [])
+
                 matches = []
-                for match in response.get("matches", []):
+                for match in (matches_list or []):
+                    m_id = getattr(match, "id", None) or (match.get("id") if isinstance(match, dict) else str(match))
+                    m_score = getattr(match, "score", None) or (match.get("score") if isinstance(match, dict) else 0.0)
+                    m_meta = getattr(match, "metadata", None) or (match.get("metadata") if isinstance(match, dict) else {}) or {}
+
                     matches.append(
                         {
-                            "bug_id": match["metadata"].get("bug_id", match["id"]),
-                            "score": float(match.get("score", 0.0)),
-                            "compiler": match["metadata"].get("compiler", ""),
-                            "version": match["metadata"].get("version", ""),
-                            "category": match["metadata"].get("category", ""),
-                            "flags": match["metadata"].get("flags", ""),
-                            "root_cause": match["metadata"].get("root_cause", ""),
-                            "workaround": match["metadata"].get("workaround", ""),
-                            "crash_signature": match["metadata"].get("crash_signature", ""),
+                            "bug_id": m_meta.get("bug_id", m_id),
+                            "score": float(m_score),
+                            "compiler": m_meta.get("compiler", ""),
+                            "version": m_meta.get("version", ""),
+                            "category": m_meta.get("category", ""),
+                            "flags": m_meta.get("flags", ""),
+                            "root_cause": m_meta.get("root_cause", ""),
+                            "workaround": m_meta.get("workaround", ""),
+                            "crash_signature": m_meta.get("crash_signature", ""),
                         }
                     )
                 if matches:

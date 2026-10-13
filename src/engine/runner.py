@@ -7,6 +7,7 @@ quotas and guaranteed container destruction.
 import io
 import os
 import tarfile
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -25,19 +26,29 @@ class CompilerSandbox:
 
     def __init__(
         self,
-        image_name: str = "compiler-sandbox-gcc",
+        compiler_type: str = "gcc",
+        image_name: Optional[str] = None,
         mem_limit: str = "512m",
         cpu_quota: int = 50000,
         cpu_period: int = 100000,
         timeout_seconds: int = 30,
-        compiler_cmd: str = "g++ -O3 -Wall",
+        compiler_cmd: Optional[str] = None,
     ):
-        self.image_name = image_name
+        self.compiler_type = compiler_type.lower()
+        if image_name:
+            self.image_name = image_name
+        else:
+            self.image_name = "compiler-sandbox-clang" if self.compiler_type == "clang" else "compiler-sandbox-gcc"
+
+        if compiler_cmd:
+            self.compiler_cmd = compiler_cmd
+        else:
+            self.compiler_cmd = "clang++ -O3 -Wall" if self.compiler_type == "clang" else "g++ -O3 -Wall"
+
         self.mem_limit = mem_limit
         self.cpu_quota = cpu_quota
         self.cpu_period = cpu_period
         self.timeout_seconds = timeout_seconds
-        self.compiler_cmd = compiler_cmd
         self._client: Optional[docker.DockerClient] = None
 
     def get_client(self) -> docker.DockerClient:
@@ -127,6 +138,7 @@ class CompilerSandbox:
         container = None
         logs = ""
         exit_code = -1
+        start_time = time.perf_counter()
 
         try:
             # Spin up ephemeral container under strict isolation
@@ -175,11 +187,14 @@ class CompilerSandbox:
                 except Exception:
                     pass
 
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
         status = self.classify_status(exit_code, logs)
         return {
             "test_file": str(test_file),
+            "compiler": self.compiler_type,
             "status": status,
             "exit_code": exit_code,
+            "duration_ms": duration_ms,
             "logs": logs.strip(),
         }
 

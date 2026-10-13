@@ -276,27 +276,152 @@ int main() {
 }
 """
 
-    def generate_suite(self, output_dir: str = "compiler_tests", count: int = 4) -> List[str]:
-        """Dynamically emits valid yet complex C++ source files targeting compiler stress areas.
+    def generate_template_depth_overflow(self, depth: int = 1500) -> str:
+        """Emits C++ code intentionally exceeding standard compiler recursion limits (-ftemplate-depth)."""
+        return f"""// Stress Category: Exceeded Template Recursion Depth Limit
+// Provokes compiler frontend depth cutoff (default max 900)
+#include <iostream>
+
+template <int N>
+struct RecursiveLimitStress {{
+    static constexpr int val = 1 + RecursiveLimitStress<N - 1>::val;
+}};
+
+template <>
+struct RecursiveLimitStress<0> {{
+    static constexpr int val = 0;
+}};
+
+int main() {{
+    // Depth {depth} intentionally exceeds GCC default depth limit of 900
+    constexpr int result = RecursiveLimitStress<{depth}>::val;
+    return result;
+}}
+"""
+
+    def generate_inline_asm_register_exhaustion(self) -> str:
+        """Emits inline assembly with clobber constraints exceeding available general-purpose registers."""
+        return """// Stress Category: Inline Assembly Register Allocator Exhaustion
+// Provokes backend impossible reload / register spill failure
+#include <cstdint>
+
+int main() {
+    uint32_t r0 = 1, r1 = 2, r2 = 3, r3 = 4, r4 = 5;
+    uint32_t r5 = 6, r6 = 7, r7 = 8, r8 = 9, r9 = 10;
+    uint32_t r10 = 11, r11 = 12, r12 = 13, r13 = 14, r14 = 15;
+
+#if defined(__x86_64__) || defined(_M_X64)
+    __asm__ __volatile__(
+        "nop\\n"
+        : "+r"(r0), "+r"(r1), "+r"(r2), "+r"(r3), "+r"(r4),
+          "+r"(r5), "+r"(r6), "+r"(r7), "+r"(r8), "+r"(r9),
+          "+r"(r10), "+r"(r11), "+r"(r12), "+r"(r13), "+r"(r14)
+        :
+        : "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "memory"
+    );
+#else
+    __asm__ __volatile__(
+        "nop\\n"
+        : "+r"(r0), "+r"(r1), "+r"(r2), "+r"(r3), "+r"(r4)
+        :
+        : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "memory"
+    );
+#endif
+
+    return static_cast<int>(r0 + r14);
+}
+"""
+
+    def generate_ambiguous_template_overload(self) -> str:
+        """Emits conflicting SFINAE candidate templates to stress overload resolution."""
+        return """// Stress Category: Ambiguous SFINAE Overload Conflict
+// Provokes frontend overload resolution ambiguity
+#include <type_traits>
+
+template <typename T, typename = std::enable_if_t<sizeof(T) >= 1>>
+int evaluate_candidate(T val) {
+    return static_cast<int>(val) * 2;
+}
+
+template <typename T, typename = std::enable_if_t<std::is_integral<T>::value>>
+int evaluate_candidate(T val) {
+    return static_cast<int>(val) * 3;
+}
+
+int main() {
+    // Both template overloads have equal substitution specificity for int
+    int result = evaluate_candidate(42);
+    return result;
+}
+"""
+
+    def generate_constexpr_step_limit_violation(self) -> str:
+        """Emits constexpr evaluation exceeding compile-time loop evaluation step quota."""
+        return """// Stress Category: Constexpr Step Limit Exhaustion
+// Provokes compile-time interpreter cutoff
+constexpr long long calculate_excessive_steps(long long count) {
+    long long acc = 0;
+    for (long long i = 0; i < count; ++i) {
+        acc += (i & 1) ? 1 : -1;
+    }
+    return acc;
+}
+
+int main() {
+    // Step count 200,000,000 exceeds constexpr iteration limit (262,144)
+    constexpr long long val = calculate_excessive_steps(200000000LL);
+    return static_cast<int>(val);
+}
+"""
+
+    def generate_suite(
+        self,
+        output_dir: str = "compiler_tests",
+        count: int = 4,
+        mode: str = "balanced",
+    ) -> List[str]:
+        """Dynamically emits C++ source files targeting compiler stress areas.
 
         Args:
             output_dir: Destination folder path for generated .cpp test files.
             count: Number of test files to emit.
+            mode: Generation mode:
+                  - 'valid-only': Generates only fully valid C++ tests that should compile cleanly.
+                  - 'balanced': Mix of valid stress tests and boundary edge cases.
+                  - 'aggressive': Emphasizes limit-exceeding tests to trigger compiler errors and RAG triage.
 
         Returns:
             List of generated test file paths.
         """
         os.makedirs(output_dir, exist_ok=True)
-        generators = [
-            ("template_recursion", lambda i: self.generate_template_recursion(depth=300 + (i * 50))),
-            ("pointer_aliasing", lambda i: self.generate_pointer_aliasing(dimensions=8 + (i * 4))),
-            ("inline_asm_volatile", lambda i: self.generate_inline_asm_volatile()),
-            ("concurrency_edge_case", lambda i: self.generate_concurrency_edge_case()),
+
+        valid_generators = [
+            ("valid_template_recursion", lambda i: self.generate_template_recursion(depth=300 + (i * 50))),
+            ("valid_pointer_aliasing", lambda i: self.generate_pointer_aliasing(dimensions=8 + (i * 4))),
+            ("valid_inline_asm", lambda i: self.generate_inline_asm_volatile()),
+            ("valid_concurrency_atomic", lambda i: self.generate_concurrency_edge_case()),
         ]
+
+        edge_generators = [
+            ("edge_depth_overflow", lambda i: self.generate_template_depth_overflow(depth=1500)),
+            ("edge_asm_reg_exhaustion", lambda i: self.generate_inline_asm_register_exhaustion()),
+            ("edge_ambiguous_sfinae", lambda i: self.generate_ambiguous_template_overload()),
+            ("edge_constexpr_limit", lambda i: self.generate_constexpr_step_limit_violation()),
+        ]
+
+        if mode == "valid-only":
+            pool = valid_generators
+        elif mode == "aggressive":
+            pool = edge_generators + [valid_generators[0]]
+        else:  # balanced: alternate valid tests with edge limit tests
+            pool = []
+            for v, e in zip(valid_generators, edge_generators):
+                pool.append(v)
+                pool.append(e)
 
         generated_files: List[str] = []
         for idx in range(count):
-            name, gen_func = generators[idx % len(generators)]
+            name, gen_func = pool[idx % len(pool)]
             code = gen_func(idx)
             filename = f"test_{idx+1:03d}_{name}.cpp"
             filepath = os.path.join(output_dir, filename)
