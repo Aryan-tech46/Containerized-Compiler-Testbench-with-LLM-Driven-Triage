@@ -387,7 +387,7 @@ int main() {
 // Stresses GIMPLE inliner pass and devirtualization tree depth
 #include <iostream>
 
-#define ALWAYS_INLINE __attribute__((always_inline)) inline
+#define ALWAYS_INLINE inline __attribute__((always_inline))
 
 ALWAYS_INLINE int stage_10(int x) { return x ^ 0xA5; }
 ALWAYS_INLINE int stage_9(int x)  { return stage_10(x + 1) * 2; }
@@ -402,11 +402,11 @@ ALWAYS_INLINE int stage_1(int x)  { return stage_2(x + 5) - 3; }
 
 int main() {
     // Nested generic lambda invocation passing through always_inline chain
-    auto dispatcher = [](auto val, auto next_fn) ALWAYS_INLINE {
+    auto dispatcher = [](auto val, auto next_fn) {
         return next_fn(val) + 1;
     };
 
-    int result = dispatcher(42, [](int v) ALWAYS_INLINE {
+    int result = dispatcher(42, [](int v) {
         return stage_1(v);
     });
 

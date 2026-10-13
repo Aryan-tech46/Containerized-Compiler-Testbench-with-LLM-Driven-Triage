@@ -43,7 +43,7 @@ class CompilerSandbox:
         if compiler_cmd:
             self.compiler_cmd = compiler_cmd
         else:
-            self.compiler_cmd = "clang++ -O3 -Wall" if self.compiler_type == "clang" else "g++ -O3 -Wall"
+            self.compiler_cmd = "clang++ -O3 -Wall -std=c++20" if self.compiler_type == "clang" else "g++ -O3 -Wall -std=c++20"
 
         self.mem_limit = mem_limit
         self.cpu_quota = cpu_quota
