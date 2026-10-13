@@ -14,50 +14,62 @@ An automated compiler stress testing and automated root-cause triage platform. T
 
 ## Architecture Overview
 
-```
-                               ┌─────────────────────────────────┐
-                               │   Synthetic C++ Test Generator   │
-                               │  (12 Stress & Edge Categories)  │
-                               └────────────────┬────────────────┘
-                                                │
-                                                ▼
-                         ┌─────────────────────────────────────────────┐
-                         │         Ephemeral Docker Sandboxes          │
-                         │   (Resource Quotas: 512MB RAM, 0.5 CPU,     │
-                         │    network_mode=none, non-root runner)      │
-                         ├──────────────────────┬──────────────────────┤
-                         │  GCC 13 (Ubuntu 24)  │ Clang 18 (Ubuntu 24) │
-                         └──────────┬───────────┴──────────┬───────────┘
-                                    │                      │
-                   PASS (Exit 0)    │                      │ Exit != 0 / Crash / ICE
-              ┌─────────────────────┘                      ▼
-              ▼                                ┌─────────────────────────┐
-     [ Record Latency & Stats ]                │ Redis Triage Cache      │
-                                               │ (SHA-256 Log Key Lookup)│
-                                               └───────────┬─────────────┘
-                                                           │ Cache Miss
-                                                           ▼
-                                               ┌─────────────────────────┐
-                                               │   Pinecone Vector RAG   │
-                                               │  (768-dim Crash Index)  │
-                                               │ (Matches Historical ICE)│
-                                               └───────────┬─────────────┘
-                                                           │ Top-K Historical Matches
-                                                           ▼
-                                               ┌─────────────────────────┐
-                                               │ Multi-LLM Triage Engine │
-                                               │ 1. Google Gemini Flash  │
-                                               │ 2. Groq / xAI Grok      │
-                                               │ 3. Local Heuristic Eng. │
-                                               └───────────┬─────────────┘
-                                                           │
-                                                           ▼
-                                               ┌─────────────────────────┐
-                                               │ Rich Terminal Dashboard │
-                                               │  • Root Cause Analysis  │
-                                               │  • Bug Classification   │
-                                               │  • Workaround Flags     │
-                                               └─────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph GEN ["1. Test Generation Engine"]
+        A["Synthetic C++20 Test Generator<br/>(12 Complex Stress & Edge Categories)"]
+    end
+
+    subgraph SANDBOX ["2. Isolated Ephemeral Docker Sandboxes"]
+        direction TB
+        B1["GCC 13 Sandbox<br/>(Ubuntu 24.04)"]
+        B2["Clang 18 Sandbox<br/>(Ubuntu 24.04 / LLVM)"]
+        LIMITS["cgroups Security Quotas:<br/>• 512MB RAM Limit<br/>• 50% CPU Quota<br/>• Network Mode: none<br/>• Non-root User Isolation"]
+    end
+
+    subgraph EVAL ["3. Result Evaluation & Caching"]
+        D{"Compilation Status"}
+        PASS["Record Latency & Summary<br/>(Exit Code 0)"]
+        CACHE[("Redis Triage Cache<br/>SHA-256 Log Digest")]
+    end
+
+    subgraph RAG_LAYER ["4. Pinecone Vector RAG"]
+        VEC[("Pinecone Serverless Index<br/>compiler-crashes (768-dim)")]
+        CORPUS[("Historical Bug Corpus<br/>GCC & LLVM ICE Signatures")]
+    end
+
+    subgraph AI_TRIAGE ["5. Multi-Model Fallback AI Triage"]
+        LLM1["Primary: Google Gemini 2.5 Flash"]
+        LLM2["Secondary: Groq Cloud / xAI Grok"]
+        LLM3["Tertiary: Local Heuristic Compiler Engine"]
+    end
+
+    subgraph DASHBOARD ["6. Real-Time Diagnostics & Reporting"]
+        CLI["Rich Terminal Dashboard<br/>• Diagnostic Classification<br/>• Root Cause Analysis<br/>• Mitigation & Workaround Flags<br/>• Cross-Compiler Differential Table"]
+    end
+
+    A --> B1
+    A --> B2
+    LIMITS -.- B1
+    LIMITS -.- B2
+
+    B1 --> D
+    B2 --> D
+
+    D -- "PASS (Exit 0)" --> PASS
+    D -- "COMPILE_ERROR / CRASH / ICE" --> CACHE
+
+    CACHE -- "Cache Hit (<2ms)" --> CLI
+    CACHE -- "Cache Miss" --> VEC
+    CORPUS -. "Seed Data" .-> VEC
+
+    VEC -- "Top-K Similar Historical Bugs" --> LLM1
+    LLM1 -- "Success" --> CLI
+    LLM1 -- "Rate Limit / Failure" --> LLM2
+    LLM2 -- "Success" --> CLI
+    LLM2 -- "Network / API Exhaustion" --> LLM3
+    LLM3 --> CLI
+    PASS --> CLI
 ```
 
 ---
